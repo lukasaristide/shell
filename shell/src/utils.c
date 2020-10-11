@@ -6,8 +6,6 @@
 void 
 printcommand(command *pcmd, int k)
 {
-	char ** arg;
-	redirection ** redirs;
 	int flags;
 
 	printf("\tCOMMAND %d\n",k);
@@ -17,14 +15,20 @@ printcommand(command *pcmd, int k)
 	}
 
 	printf("\t\targv=:");
-	for (arg=pcmd->argv;*arg;arg++){
-		printf("%s:",*arg);
-	}
+	argseq * argseq = pcmd->args;
+	do{
+		printf("%s:", argseq->arg);
+		argseq= argseq->next;
+	}while(argseq!=pcmd->args);
 
 	printf("\n\t\tredirections=:");
-	for (redirs=pcmd->redirs;*redirs;redirs++){
-		flags = (*redirs)->flags;
-		printf("(%s,%s):",(*redirs)->filename,IS_RIN(flags)?"<": IS_ROUT(flags) ?">": IS_RAPPEND(flags)?">>":"??");
+	redirseq * redirs = pcmd->redirs;
+	if (redirs){
+		do{	
+			flags = redirs->r->flags;
+			printf("(%s,%s):",redirs->r->filename,IS_RIN(flags)?"<": IS_ROUT(flags) ?">": IS_RAPPEND(flags)?">>":"??");
+			redirs= redirs->next;
+		} while (redirs!=pcmd->redirs);	
 	}
 
 	printf("\n");
@@ -36,50 +40,52 @@ printpipeline(pipeline * p, int k)
 	int c;
 	command ** pcmd;
 
+	commandseq * commands= p->commands;
+
 	printf("PIPELINE %d\n",k);
-	if (p==NULL){
+	
+	if (commands==NULL){
 		printf("\t(NULL)\n");
 		return;
 	}
+	c=0;
+	do{
+		printcommand(commands->com,++c);
+		commands= commands->next;
+	}while (commands!=p->commands);
 
-	c=1;
-	for (pcmd=p->commands;*pcmd;pcmd++,c++){
-		printcommand(*pcmd,c);
-	}
-	printf("Totally %d commands in pipeline %d.\n",c-1,k);
-	printf("Flags: %d.\n", p->flags);
+	printf("Totally %d commands in pipeline %d.\n",c,k);
+	printf("Pipeline %sin backgraound.\n", (p->flags & INBACKGROUND) ? "" : "NOT ");
 }
 
 void
-printparsedline(line * ln)
+printparsedline(pipelineseq * ln)
 {
 	int c;
-	pipeline ** p;
+	pipelineseq * ps = ln;
 
 	if (!ln){
 		printf("%s\n",SYNTAX_ERROR_STR);
 		return;
 	}
-	c=1;
-	for (p=ln->pipelines;*p;p++, c++){
-		printpipeline(*p,c);
-	}
-	printf("Totally %d pipelines.",c-1);
-	if (ln->flags&LINBACKGROUND){
-		printf(" Line in background.");
-	}
+	c=0;
+
+	do{
+		printpipeline(ps->pipeline,++c);
+		ps= ps->next;
+	} while(ps!=ln);
+
+	printf("Totally %d pipelines.",c);
 	printf("\n");
 }
 
 command *
-pickfirstcommand(line * ln)
+pickfirstcommand(pipelineseq * ppls)
 {
-	if  ( (ln==NULL)
-		||( ln->pipelines==NULL )
-		||( *(ln->pipelines)==NULL ) 
-		||( (*(ln->pipelines))->commands==NULL )
-		||( *((*(ln->pipelines))->commands)==NULL )
-		)	return NULL;
-
-	return *((*(ln->pipelines))->commands);
+	if ((ppls==NULL)
+		|| (ppls->pipeline==NULL)
+		|| (ppls->pipeline->commands==NULL)
+		|| (ppls->pipeline->commands->com==NULL))	return NULL;
+	
+	return ppls->pipeline->commands->com;
 }
