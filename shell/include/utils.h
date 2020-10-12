@@ -5,8 +5,8 @@
 
 void printcommand(command *, int);
 void printpipeline(pipeline, int);
-void printparsedline(line *);
+void printparsedline(pipelineseq *);
 
-command * pickfirstcommand(line *);
+command * pickfirstcommand(pipelineseq *);
 
 #endif /* !_UTILS_H_ */

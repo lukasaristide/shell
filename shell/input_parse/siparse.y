@@ -1,9 +1,12 @@
 %{
+	#include <errno.h>
 	#include <siparse.h>
+	#include <stdio.h>
+
 	#include "siparseutils.h"
-    #include <stdio.h>
     
 	extern int yyleng;
+	int parse_flags;
 
 	int yylex(void);
 	void yyerror(char *);
@@ -11,20 +14,19 @@
 	void switchinputbuftostring(const char *);
 	void freestringinputbuf(void);
 
-	static line parsed_line;
+	pipelineseq * parsed_line;
 %}
 
 
 %union{
 	int flags;
-	char * name;
-	char ** argv;
-	redirection * redir;
-	redirection ** redirseq;
-	command * comm;
-	pipeline * pipeln;
-	pipelineseq pipelnsq;
-	line* parsedln;
+	char *name;
+	argseq *args;
+	redir *redir;
+	redirseq *redirseq;
+	command *comm;
+	pipeline * pipeline;
+	pipelineseq * pipelineseq;
 }
 
 %token SSTRING
@@ -34,16 +36,13 @@
 
 line:
 	pipelineseq mpipelinesep mcomment mendl {
-			lastpipelinesetflags($2.flags);
-			parsed_line.pipelines = closepipelineseq(); 
-	//		parsed_line.flags= $2.flags;
-			$$.parsedln = &parsed_line;
+			if ($2.flags==INBACKGROUND){
+				if  (push_last_to_bg($1.pipelineseq) != OK) {/* unexpected */ YYABORT;};
+			}
+			
+			parsed_line = $1.pipelineseq;
+			$$ = $1;
 		}
-	;
-
-mpipelinesep:
-	pipelinesep
-	|	
 	;
 
 mcomment:
@@ -56,76 +55,92 @@ mendl:
 	|
 	;
 
-pipelineseq:
-	pipelineseq pipelinesep prepipeline{
-			lastpipelinesetflags($2.flags);
-			$$.pipelnsq = appendtopipelineseq($3.pipeln);
-		}
+mpipelinesep:
+	pipelinesep   	{$$.flags = $1.flags;}
+	|		{$$.flags = 0;}
+	;
 
-	| prepipeline{
-			$$.pipelnsq = appendtopipelineseq($1.pipeln);
+
+pipelineseq:
+	pipelineseq pipelinesep pipeline{
+			if ($2.flags==INBACKGROUND) push_last_to_bg($1.pipelineseq);
+			$$.pipelineseq = append_to_pipelineseq($1.pipelineseq, $3.pipeline);
+			if (! $$.pipelineseq) { parse_flags|=ALLOCFAILED; YYABORT;};
+		}
+	| pipeline{
+			$$.pipelineseq = start_pipelineseq($1.pipeline);
+			if (! $$.pipelineseq) { parse_flags|=ALLOCFAILED; YYABORT;};
 		}
 	;
 
 pipelinesep:
-	';'	{ $$.flags = 0; }
-	| '&'	{ $$.flags = LINBACKGROUND; }
+	';'	{$$.flags = 0;}
+	| '&'   {$$.flags = INBACKGROUND;};
 	;
 
-prepipeline:
-	pipeline {
-			closepipeline();
-		}
-	;
 
 pipeline:
 	pipeline '|' single {
-			$$.pipeln = appendtopipeline($3.comm);
+			$$.pipeline = append_to_pipeline($1.pipeline, $3.comm);
+			if (! $$.pipeline) { parse_flags|=ALLOCFAILED; YYABORT;};
 		}
 	| single {
-			$$.pipeln = appendtopipeline($1.comm);
+			$$.pipeline = start_pipeline($1.comm);
+			if (! $$.pipeline) { parse_flags|=ALLOCFAILED; YYABORT;};
 		}
 	;
 
 single:
-	allnames allredirs {
-			if ($1.argv==NULL) {
+	mnames mredirs {
+			if ($1.args==NULL) {
 				$$.comm= NULL;	
 			} else {
-				command *com= nextcommand();
-				com->argv = $1.argv;
+				command *com= new_command();
+				if (!com) { parse_flags|=ALLOCFAILED; YYABORT;};
+				com->args = $1.args;
 				com->redirs = $2.redirseq;
 				$$.comm = com;
 			}
 		}
 	;
 
-allnames:
-	names name { 
-			$$.argv = appendtoargv($2.name);
-			$$.argv = closeargv(); 
-		}
 
-
-allredirs:
-		 redirs { $$.redirseq = closeredirseq(); }
+mnames:
+	names
+	|
+	;
 
 names:
 	names name {
-			$$.argv = appendtoargv($2.name);
+			$$.args = append_to_args($1.args, $2.name);
+			if (! $$.args) { parse_flags|=ALLOCFAILED; YYABORT;};
 		} 
-	|	 
+	| name {
+			$$.args= start_args($1.name);
+			if (! $$.args) { parse_flags|=ALLOCFAILED; YYABORT;};
+		}	 
 	;
 
 name:	SSTRING {
 			$$.name= copytobuffer(yyval.name, yyleng+1);
+			if (! $$.name) { parse_flags|=ALLOCFAILED; YYABORT;};
 		};
+
+
+mredirs:
+	redirs
+	|
+	;
 
 redirs:
 	redirs redir {
-			$$.redirseq = appendtoredirseq($2.redir);
+			$$.redirseq = append_to_redirs($1.redirseq, $2.redir);
+			if (! $$.redirseq) { parse_flags|=ALLOCFAILED; YYABORT;};
 		}
-	|	{	$$.redirseq = NULL; };
+	| redir	{
+			$$.redirseq = start_redirs($1.redir); 
+			if (! $$.redirseq) { parse_flags|=ALLOCFAILED; YYABORT;};
+		};
 	;
 
 redir:
@@ -138,34 +153,44 @@ redirIn:
 	;
 
 redirOut:
-	OAPPREDIR rname 	{ $2.redir->flags = ROUT | RAPPEND ; $$=$2; }
-	| '>' rname	{ $2.redir->flags = ROUT; $$=$2; }
+	OAPPREDIR rname		{ $2.redir->flags = ROUT | RAPPEND ; $$=$2; }
+	| '>' rname		{ $2.redir->flags = ROUT; $$=$2; }
 	;
 
 rname:
 	 name {
-			redirection * red;
+			redir * red;
 
-			red=nextredir();
+			red=new_redir();
+			if (!red) { parse_flags|=ALLOCFAILED; YYABORT;};
 			red->filename = $1.name;
 			$$.redir= red;
 		}
+	;
+
+
+
 
 %%
 
 void yyerror(char *s) {
+	parse_flags|=YYERRORFLAG;
 }
 
 
-line * parseline(char *str){
+pipelineseq * parseline(char *str){
 	int parseresult;
 
+	parse_flags=0;
 	resetutils();
 	switchinputbuftostring(str);
 	parseresult = yyparse();
 	freestringinputbuf();
 
-	if (parseresult) return NULL;
-	return &parsed_line;
+	if (parseresult){
+		errno = parse_flags;
+		return NULL;
+	}
+	return parsed_line;
 }
 

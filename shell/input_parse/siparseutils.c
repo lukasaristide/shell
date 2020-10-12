@@ -6,19 +6,203 @@
 #include "siparse.h"
 #include "siparseutils.h"
 
+
+/* Static pool of structures for parsing shell commands. */
+/* (overkill allocation) */
+
+#define MAX_ARGS (MAX_LINE_LENGTH/2)
+#define MAX_REDIRS (MAX_LINE_LENGTH/2)
+#define MAX_REDIRSEQS MAX_REDIRS
+#define MAX_COMMANDS (MAX_LINE_LENGTH/2)
+#define MAX_COMMANDSEQS MAX_COMMANDS
+#define MAX_PIPELINES MAX_COMMANDS
+#define MAX_PIPELINESEQS MAX_PIPELINES
+
+argseq argseq_pool[MAX_ARGS];
+redir redir_pool[MAX_REDIRS];
+redirseq redirseq_pool[MAX_REDIRSEQS];
+command command_pool[MAX_COMMANDS];
+commandseq commandseq_pool[MAX_COMMANDSEQS];
+pipeline pipeline_pool[MAX_PIPELINES];
+pipelineseq pipelineseq_pool[MAX_PIPELINESEQS];
+
+int next_argseq, next_redir, next_redirseq, next_pipeline, next_pipelineseq,  next_command, next_commandseq;
+
 void
 resetutils(void){
-		resetbuffer();
-		resetargvs();
-		resetcommands();
-		resetredirs();
-		resetredirseqs();
-		resetpipelines();
-		resetpipelineseqs();
+	next_argseq =next_redir =next_redirseq =next_pipeline =next_pipelineseq =next_command =next_commandseq=0;
+	resetbuffer();
 }
 
+/* static getters */
+
+static argseq * get_argseq(void){
+	if (next_argseq==MAX_ARGS) return NULL; // no mem
+	argseq * new_seq = argseq_pool+next_argseq;
+	next_argseq++;
+	return new_seq;
+}
+
+static redirseq * get_redirseq(void){
+	if (next_redirseq==MAX_REDIRSEQS) return NULL; // no mem
+	redirseq * new_seq = redirseq_pool+next_redirseq;
+	next_redirseq++;
+	return new_seq;
+}
+
+static commandseq * get_commandseq(void){
+	if (next_commandseq==MAX_COMMANDSEQS) return NULL; // no mem
+	commandseq * new_commandseq = commandseq_pool+next_commandseq;
+	next_commandseq++;
+	return new_commandseq;
+}
+
+
+static pipeline * get_pipeline(void){
+	if (next_pipeline==MAX_PIPELINES) return NULL; // no mem
+	pipeline * new_pipeline = pipeline_pool+next_pipeline;
+	next_pipeline++;
+	return new_pipeline;
+}
+
+static pipelineseq * get_pipelineseq(void){
+	if (next_pipelineseq==MAX_PIPELINESEQS) return NULL; // no mem
+	pipelineseq * new_pipelineseq = pipelineseq_pool+next_pipelineseq;
+	next_pipelineseq++;
+	return new_pipelineseq;
+}
+
+/* argseq */
+
+argseq * start_args(char * name){
+	argseq * new_seq = get_argseq();
+	if (!new_seq) return NULL;
+	new_seq->arg 	= name;
+	new_seq->next 	= new_seq;
+	new_seq->prev 	= new_seq;
+	return new_seq;
+}
+
+argseq * append_to_args(argseq * args, char * name){
+	argseq * new_seq = get_argseq();
+	if (!new_seq) return NULL;
+	new_seq->arg = name;
+	new_seq->next = args;
+	new_seq->prev = args->prev;
+	args->prev->next = new_seq;
+	args->prev= new_seq;
+	return args;	
+}
+
+/* redir */
+
+redir * new_redir(void){
+	if (next_redir==MAX_REDIRS) return NULL; // no mem
+	redir * rd  = redir_pool+next_redir;
+	next_redir++;
+	return rd;
+}
+
+/* redirseq */
+redirseq * start_redirs(redir * initial_redir){
+	redirseq * new_seq = get_redirseq();
+	if (!new_seq) return NULL;
+	new_seq->r 	= initial_redir;
+	new_seq->next 	= new_seq;
+	new_seq->prev 	= new_seq;
+	return new_seq;
+}
+redirseq * append_to_redirs(redirseq * redirs, redir * next_redir){
+	redirseq * new_seq = get_redirseq();
+	if (!new_seq) return NULL;
+	new_seq->r = next_redir;
+	new_seq->next = redirs;
+	new_seq->prev = redirs->prev;
+	redirs->prev->next = new_seq;
+	redirs->prev= new_seq;
+	return redirs;	
+}
+
+/* command */
+
+command * new_command(void){
+	if (next_command==MAX_COMMANDS) return NULL; // no mem
+	command * new_com  = command_pool+next_command;
+	next_command++;
+	return new_com;
+}
+
+/* commandseq */
+commandseq * start_commandseq(command * initial_command){
+	commandseq * new_csq = get_commandseq();
+	new_csq->com = initial_command;
+	new_csq->next= new_csq;
+	new_csq->prev= new_csq;
+	return new_csq;
+}
+
+commandseq * append_to_commandseq(commandseq * csq, command * com){
+	commandseq * new_csq = get_commandseq();
+	if (!new_csq) return NULL;
+	new_csq->com = com;
+
+	new_csq->next= csq;
+	new_csq->prev= csq->prev;
+	csq->prev->next= new_csq;
+	csq->prev= new_csq;
+	return new_csq;
+}
+
+/* pipeline */
+pipeline * start_pipeline(command * initial_command){	
+	pipeline * new_ppl = get_pipeline();
+	commandseq * com_seq = start_commandseq(initial_command);
+	if ((new_ppl==NULL) || (com_seq==NULL)) return NULL;
+	new_ppl->commands = com_seq;
+	new_ppl->flags = 0;
+	return new_ppl;
+}
+pipeline * append_to_pipeline(pipeline * ppl, command * comm){
+	append_to_commandseq(ppl->commands, comm);
+	return ppl;
+}
+
+/* pipelineseq */
+
+pipelineseq * start_pipelineseq(pipeline * initial_pipeline){
+	pipelineseq * new_psq = get_pipelineseq();
+	if (new_psq==NULL) return NULL;
+	new_psq->pipeline = initial_pipeline;
+	new_psq->next= new_psq;
+	new_psq->prev= new_psq;
+	return new_psq;
+}
+
+
+pipelineseq * append_to_pipelineseq(pipelineseq * psq, pipeline * pp){
+	pipelineseq * new_psq = get_pipelineseq();
+	if (new_psq==NULL) return NULL;
+
+	new_psq->pipeline = pp;
+	new_psq->next= psq;
+	new_psq->prev= psq->prev;
+	psq->prev->next= new_psq;
+	psq->prev= new_psq;
+	return psq;
+}
+
+int push_last_to_bg(pipelineseq * psq){
+	if ((!psq) || (!psq->prev) || (!psq->prev->pipeline))  return FAIL;
+	psq->prev->pipeline->flags |= INBACKGROUND;
+	return OK; //OK
+}
+
+
+
+
+//----------------------------------------------------------------------------------------------------------
 /*
- * buffer for string from the parsed line
+ * buffer for strings from the parsed line
  */
 static char linebuffer[MAX_LINE_LENGTH+1];
 static const char *linebufferend= linebuffer+MAX_LINE_LENGTH;
@@ -45,189 +229,3 @@ resetbuffer(void){
 	bufptr= linebuffer;
 }
 
-/* 
- * buffer for args
- * each argv is NULL terminated substring of the buffer
- */
-static char * argvs[MAX_ARGS*2];
-static char **nextarg = argvs;
-static char **currentargv = argvs;
-
-char ** 
-appendtoargv(char* arg){
-	*nextarg = arg;
-	nextarg++;
-	return currentargv;
-}
-
-char **
-closeargv(void){
-	char ** oldstart;
-
-	appendtoargv(NULL);
-	oldstart = currentargv;
-	currentargv = nextarg;
-	return oldstart;
-}
-
-void
-resetargvs(void){
-	currentargv=argvs;
-	nextarg=currentargv;
-}
-
-/*
- * buffer for commands
- */
-static command commandsbuf[MAX_COMMANDS+1];
-static command * nextcom=commandsbuf;
-
-command *
-nextcommand(void){
-	command * curr;
-	
-	curr = nextcom;
-	nextcom++;
-//	nextcom->argv=NULL;
-	return curr;
-}
-
-void
-resetcommands(void){
-	nextcom= commandsbuf;
-}
-
-/* 
- * buffer for redirections
- */
-static redirection redirbuf[MAX_REDIRS];
-static redirection *nextred;
-
-redirection * nextredir(void){
-	return (nextred++);	
-}
-
-void resetredirs(void){
-	nextred = redirbuf;
-};
-
-static redirection *  redirseqbuf[MAX_REDIRS*2];
-static redirection ** currentredirseq;
-static redirection ** currentredirseqstart;
-
-redirection ** appendtoredirseq(redirection * redir){
-
-	*currentredirseq = redir;
-	currentredirseq++;
-
-	return currentredirseqstart;
-}
-
-redirection ** closeredirseq(void){
-	redirection ** oldstart;
-		
-	oldstart = appendtoredirseq(NULL);
-	currentredirseqstart = currentredirseq;
-	
-	return oldstart;
-};
-
-void resetredirseqs(void){
-	currentredirseqstart = redirseqbuf;
-	currentredirseq = redirseqbuf;
-}
-
-/*
- * pipelines buffer
- */
-
-static command *	commandseqbuf[MAX_COMMANDS*2];
-static command **	currentcommandseqend;
-static command **	currentcommandseqstart;
-
-static pipeline 	pipelinebuf[MAX_PIPELINES];
-static pipeline * 	currentpipeline;
-
-pipeline * appendtopipeline(command * comm){
-
-	*currentcommandseqend = comm;
-	currentcommandseqend++;
-
-	return currentpipeline;
-}
-
-pipeline * closepipeline(void){
-
-	appendtopipeline(NULL);
-	currentpipeline->commands = currentcommandseqstart;
-	currentpipeline->flags = 0;
-
-	currentcommandseqstart = currentcommandseqend;
-
-	return (currentpipeline++);
-};
-
-void resetpipelines(void){
-	currentpipeline = pipelinebuf;
-	currentcommandseqstart=currentcommandseqend= commandseqbuf;
-//	currentpipelinestart = pipelinesbuf;
-}
-
-/*
- * pipelinesseq buffer
- */
-
-static pipeline*	pipelineseqbuf[MAX_PIPELINES*2];
-static pipeline**	currentpipelineseqend;	//first free entry
-static pipeline**	currentpipelineseqstart;
-
-pipelineseq appendtopipelineseq(pipeline * pline){
-
-	*currentpipelineseqend = pline;
-	currentpipelineseqend++;
-
-	return currentpipelineseqstart;
-}
-
-void lastpipelinesetflags(int flags){
-	if (currentpipelineseqstart==currentpipelineseqend){
-		//pipeline seq empty
-		return;
-	}
-	pipeline * last = *(currentpipelineseqend-1);
-	last->flags = flags; 
-}
-
-pipelineseq closepipelineseq(void){
-	pipelineseq oldstart;
-		
-	oldstart = appendtopipelineseq(NULL);
-	currentpipelineseqstart = currentpipelineseqend;
-	
-	return oldstart;
-};
-
-void resetpipelineseqs(void){
-	currentpipelineseqend = pipelineseqbuf;
-	currentpipelineseqstart=currentpipelineseqend = pipelineseqbuf;
-}
-/*
- * printing
-void printcommand(command *com){
-	char **arg;
-	redirection ** red;
-
-
-	printf("argv:\n");	
-	for (arg = com->argv; *arg; arg++){
-		printf(":%s:", *arg);
-	}
-	printf("\n");
-
-	printf("redirections:\n");
-	for (red = com->redirs; *red; red++){
-		printf("filename:%s: flags: %d\n", (*red)->filename, (*red)->flags); 
-	}
-	printf("\n");
-}
- */

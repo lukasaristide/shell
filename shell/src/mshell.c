@@ -7,7 +7,7 @@
 int
 main(int argc, char *argv[])
 {
-	line * ln;
+	pipelineseq * ln;
 	command *com;
 
 	char buf[2048];

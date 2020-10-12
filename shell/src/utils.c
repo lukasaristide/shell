@@ -55,7 +55,7 @@ printpipeline(pipeline * p, int k)
 	}while (commands!=p->commands);
 
 	printf("Totally %d commands in pipeline %d.\n",c,k);
-	printf("Pipeline %sin backgraound.\n", (p->flags & INBACKGROUND) ? "" : "NOT ");
+	printf("Pipeline %sin background.\n", (p->flags & INBACKGROUND) ? "" : "NOT ");
 }
 
 void

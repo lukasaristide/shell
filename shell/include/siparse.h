@@ -1,11 +1,8 @@
 #ifndef _SIPARSE_H_
 #define _SIPARSE_H_
 
-typedef struct redirection{
-	char *filename;
-	int flags;
-} redirection;
-
+#define OK 0
+#define FAIL 1
 /*
  * redirection flags
  */
@@ -19,43 +16,63 @@ typedef struct redirection{
 #define IS_RAPPEND(x)	 (((x)&RTMASK) == (ROUT|RAPPEND) )
 
 
-typedef struct command {
-	char** argv; 			/* NULL ended array of arguments */
-	redirection** redirs;	/* NULL ended array of pointers to redirections */
-} command;  
-
-/* NULL ended array of pointers to commands */
-typedef command** commandseq;
-
-typedef struct pipeline{
-	commandseq commands;
-	int flags;
-} pipeline;
-
 /*
  * flags for pipeline
  */
-#define LINBACKGROUND 	1
+#define INBACKGROUND 	1
 
-/* NULL ended array of pointers to pipelines */
-typedef pipeline** pipelineseq;
+/* structures */
+typedef struct argseq {
+	char * arg;
+	struct argseq * next;
+	struct argseq * prev;
+} argseq;
 
-typedef struct line {
-	pipelineseq pipelines;
+typedef struct redir{
+	char *filename;
 	int flags;
-} line;
+} redir;
 
+typedef struct redirseq {
+	redir * r;
+	struct redirseq * next;
+	struct redirseq * prev;
+} redirseq;
 
+typedef struct command {
+	argseq * args;
+	redirseq * redirs;
+} command;
 
+typedef struct commandseq {
+	command * com;
+	struct commandseq * next;
+	struct commandseq * prev;
+} commandseq;
+
+typedef struct pipeline {
+	commandseq * commands;
+	int flags;
+} pipeline;
+
+typedef struct pipelineseq {
+	pipeline * pipeline;
+	struct pipelineseq * next;
+	struct pipelineseq * prev;
+} pipelineseq;
 
 /*
  * Parses given string containing sequence of pipelines separated by ';'. 
  * Each pipeline is a sequence of commands separated by '|'.
- * Function returns a pointer to the static structure line or NULL if meets a parse error.
+ * Function returns a pointer to the static structure pipelineseq or NULL if meets an error.
  * All structures referenced from the result of the function are statically allocated and shall not be freed.
  * Passing a string longer than MAX_LINE_LENGHT may result in an unspecified behaviour.
  * Consecutive calls to the function destroy the content of previously returned structures.
  */
-line * parseline(char *);
+pipelineseq * parseline(char *);
+
+/* parse flags returned in errno when 'parseline' returns NULL */
+#define ALLOCFAILED 1
+#define YYERRORFLAG 2
 
 #endif /* !_SIPARSE_H_ */

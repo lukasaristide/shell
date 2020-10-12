@@ -1,9 +1,4 @@
 
-#define MAX_COMMANDS (MAX_LINE_LENGTH/2 +1)
-#define MAX_PIPELINES MAX_COMMANDS
-#define MAX_ARGS MAX_COMMANDS
-#define MAX_REDIRS MAX_COMMANDS
-
 void resetutils(void);
 
 /*
@@ -13,38 +8,29 @@ void resetutils(void);
 char * copytobuffer(const char *, const short);
 void resetbuffer(void);
 
-/* 
- * buffer for args
- * each argv is NULL terminated substring of the buffer
- */
-
-char ** appendtoargv(char*);
-char ** closeargv(void);
-void resetargvs(void);
-
-/*
- * buffer for commands
- */
-command * nextcommand(void);
-void resetcommands(void);
-
-/*
- * buffer for redirections
- */
-redirection * nextredir(void);
-void resetredirs(void);
-redirection ** appendtoredirseq(redirection * );
-
-redirection ** closeredirseq(void);
-void resetredirseqs(void);
-
-pipeline * appendtopipeline(command *);
-void lastpipelinesetflags(int);
-pipeline * closepipeline(void);
-void resetpipelines(void);
 
 
-pipelineseq appendtopipelineseq(pipeline *);
-pipelineseq closepipelineseq(void);
-void resetpipelineseqs(void);
-	
+/* argseq */
+argseq * start_args(char * name);
+argseq * append_to_args(argseq * args, char * name);
+
+/* redir */
+redir * new_redir(void);
+
+/* redirseq */
+redirseq * start_redirs(redir * initial_redir);
+redirseq * append_to_redirs(redirseq * redirs, redir * r);
+		
+/* command */
+command * new_command(void);
+
+
+/* pipeline */
+pipeline * start_pipeline(command * initial_command);
+pipeline * append_to_pipeline(pipeline * ppl, command * comm);
+
+/* pipelineseq */
+
+pipelineseq * start_pipelineseq(pipeline * initial_pipeline);
+pipelineseq * append_to_pipelineseq(pipelineseq * psq, pipeline * pp);
+int push_last_to_bg(pipelineseq *);
