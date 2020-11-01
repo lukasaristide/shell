@@ -6,6 +6,8 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
+#include <sys/stat.h>
+
 
 #include "config.h"
 #include "siparse.h"
@@ -84,19 +86,25 @@ int main(int argc, char *argv[])
 	char buf[MAX_LINE_LENGTH];
 	char ** Argv;
 	__pid_t forked;
+	struct stat fstat_buf;
+	int fstat_status;
+
+	if(fstat(0,&fstat_buf))
+		exit(EXIT_FAILURE);
 
 	begin_main_loop:
 		//writing prompt
-		write(1, PROMPT_STR, 2);
+		if(S_ISCHR(fstat_buf.st_mode))
+			write(1, PROMPT_STR, strlen(PROMPT_STR));
 
-		//clear buffer
+		//clearing buffer
 		memset(buf, 0, MAX_LINE_LENGTH);
 
 		//reading line + memorizing, how many chars were there
 		howManyDidIRead = read(0, buf, MAX_LINE_LENGTH);
 
 		//if eof encountered - stop
-		if(howManyDidIRead == 0)
+		if(howManyDidIRead <= 0)
 			goto end_main_loop;
 
 		//handling too long input lines
