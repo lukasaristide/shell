@@ -1,24 +1,32 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include "builtins.h"
 
+int lexit(char*[]);
 int echo(char*[]);
+int lcd(char*[]);
+int lkill(char*[]);
+int lls(char*[]);
 int undefined(char *[]);
 
-builtin_pair builtins_table[]={
-	{"exit",	&undefined},
+builtin_pair builtins_table[] = {
+	{"exit",	&lexit},
 	{"lecho",	&echo},
-	{"lcd",		&undefined},
-	{"lkill",	&undefined},
-	{"lls",		&undefined},
+	{"lcd",		&lcd},
+	{"lkill",	&lkill},
+	{"lls",		&lls},
 	{NULL,NULL}
 };
 
-int 
-echo( char * argv[])
-{
+int lexit(char* argv[]){
+	exit(EXIT_SUCCESS);
+}
+
+int echo( char * argv[]) {
 	int i =1;
 	if (argv[i]) printf("%s", argv[i++]);
 	while  (argv[i])
@@ -29,9 +37,34 @@ echo( char * argv[])
 	return 0;
 }
 
-int 
-undefined(char * argv[])
-{
+int undefined(char * argv[]) {
 	fprintf(stderr, "Command %s undefined.\n", argv[0]);
 	return BUILTIN_ERROR;
 }
+
+int lcd(char* argv[]){
+	if(argv[1] == NULL)
+		return chdir(getenv("HOME"));
+	return chdir(argv[1]);
+}
+
+int lkill(char* argv[]){
+	//TODO
+	return undefined(argv);
+}
+
+int lls(char* argv[]){
+	char path[PATH_MAX];
+	DIR * cur_dir = opendir(getcwd(path,PATH_MAX));
+	if(cur_dir == NULL)
+		return -1;
+	struct dirent * tmp_cont;
+	while(tmp_cont = readdir(cur_dir)){
+		if(tmp_cont->d_name[0] == '.')
+			continue;
+		write(1,tmp_cont->d_name,strlen(tmp_cont->d_name));
+		write(1,"\n",1);
+	}
+	return closedir(cur_dir);
+}
+

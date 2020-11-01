@@ -13,6 +13,7 @@
 #include "config.h"
 #include "siparse.h"
 #include "utils.h"
+#include "builtins.h"
 
 //name says everything
 size_t count_args(command *com){
@@ -195,6 +196,18 @@ int main(int argc, char *argv[])
 
 		//and let's copy them to said array
 		copy_args(Argv, com);
+
+		//handle builtins
+		for(i = 0; builtins_table[i].name != NULL; i++){
+			if(strcmp(builtins_table[i].name, Argv[0]) == 0){
+				if(builtins_table[i].fun(Argv)){
+					write(2, "Builtin '", 9);
+					write(2, Argv[0], strlen(Argv[0]));
+					write(2, "' error.", 8);
+				}
+				goto begin_main_loop;
+			}
+		}
 
 		//starting new process
 		forked = fork();
