@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
 	pipelineseq * ln;
 	command * com;
 	size_t howManyDidIRead, argcounter;
-	char buf[MAX_LINE_LENGTH];
+	char buf[2*MAX_LINE_LENGTH];
 	char ** Argv;
 	__pid_t forked;
 	struct stat fstat_buf;
@@ -97,15 +97,15 @@ int main(int argc, char *argv[])
 		if(S_ISCHR(fstat_buf.st_mode))
 			write(1, PROMPT_STR, strlen(PROMPT_STR));
 
-		//clearing buffer
-		memset(buf, 0, MAX_LINE_LENGTH);
-
 		//reading line + memorizing, how many chars were there
 		howManyDidIRead = read(0, buf, MAX_LINE_LENGTH);
 
 		//if eof encountered - stop
 		if(howManyDidIRead <= 0)
 			goto end_main_loop;
+
+		//instead of clearing buffer - let's add zero after read content
+		buf[howManyDidIRead] = 0;
 
 		//handling too long input lines
 		if(buf[howManyDidIRead-1] != '\n'){
