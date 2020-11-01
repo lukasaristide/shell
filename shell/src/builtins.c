@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/types.h>
+#include <signal.h>
+#include <ctype.h>
 
 #include "builtins.h"
 
@@ -23,6 +26,8 @@ builtin_pair builtins_table[] = {
 };
 
 int lexit(char* argv[]){
+	if(argv[1] != NULL)
+		return -1;
 	exit(EXIT_SUCCESS);
 }
 
@@ -45,15 +50,22 @@ int undefined(char * argv[]) {
 int lcd(char* argv[]){
 	if(argv[1] == NULL)
 		return chdir(getenv("HOME"));
+	if(argv[2] != NULL)
+		return -1;
 	return chdir(argv[1]);
 }
 
 int lkill(char* argv[]){
-	//TODO
-	return undefined(argv);
+	if(argv[1] == NULL || (argv[1][0] != '-' && argv[2] != NULL) || (argv[1][0] == '-' && argv[3] != NULL))
+		return -1;
+	if(argv[1][0] != '-')
+		return kill(atoi(argv[1]),SIGTERM);
+	return kill(atoi(argv[2]), atoi(argv[1]+1));
 }
 
 int lls(char* argv[]){
+	if(argv[1] != NULL)
+		return -1;
 	char path[PATH_MAX];
 	DIR * cur_dir = opendir(getcwd(path,PATH_MAX));
 	if(cur_dir == NULL)

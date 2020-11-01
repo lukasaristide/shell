@@ -42,11 +42,12 @@ void copy_args(char ** dest, command * source){
 }
 
 //free memory at Argv to prevent memory leaks
-void free_Argv(char ** Argv, int argcounter){
+void free_Argv(char ** Argv){
 	size_t i = 0;
 	while(1){
-		free(Argv[i++]);
-		if(i >= argcounter)
+		if(Argv[i] != NULL)
+			free(Argv[i++]);
+		else
 			break;
 	}
 	free(Argv);
@@ -201,10 +202,11 @@ int main(int argc, char *argv[])
 		for(i = 0; builtins_table[i].name != NULL; i++){
 			if(strcmp(builtins_table[i].name, Argv[0]) == 0){
 				if(builtins_table[i].fun(Argv)){
-					write(2, "Builtin '", 9);
+					write(2, "Builtin ", 8);
 					write(2, Argv[0], strlen(Argv[0]));
-					write(2, "' error.", 8);
+					write(2, " error.\n", 8);
 				}
+				free_Argv(Argv);
 				goto begin_main_loop;
 			}
 		}
@@ -219,11 +221,12 @@ int main(int argc, char *argv[])
 			waitpid(forked, NULL, 0);
 		} else{
 			//if somehow we didn't manage to fork, let's end with error - that's not good
+			free_Argv(Argv);
 			exit(EXIT_FAILURE);
 		}
 
 		//freeing memory at Argv
-		free_Argv(Argv, argcounter);
+		free_Argv(Argv);
 
 		goto begin_main_loop;
 	end_main_loop:
