@@ -9,6 +9,8 @@
 
 #include "builtins.h"
 
+#define SUCCESS 0
+
 int lexit(char*[]);
 int echo(char*[]);
 int lcd(char*[]);
@@ -39,7 +41,7 @@ int echo( char * argv[]) {
 
 	printf("\n");
 	fflush(stdout);
-	return 0;
+	return SUCCESS;
 }
 
 int undefined(char * argv[]) {
@@ -51,13 +53,13 @@ int lcd(char* argv[]){
 	if(argv[1] == NULL)
 		return chdir(getenv("HOME"));
 	if(argv[2] != NULL)
-		return -1;
+		return BUILTIN_ERROR;
 	return chdir(argv[1]);
 }
 
 int lkill(char* argv[]){
 	if(argv[1] == NULL || (argv[1][0] != '-' && argv[2] != NULL) || (argv[1][0] == '-' && argv[3] != NULL))
-		return -1;
+		return BUILTIN_ERROR;
 	if(argv[1][0] != '-')
 		return kill(atoi(argv[1]),SIGTERM);
 	return kill(atoi(argv[2]), atoi(argv[1]+1));
@@ -65,11 +67,11 @@ int lkill(char* argv[]){
 
 int lls(char* argv[]){
 	if(argv[1] != NULL)
-		return -1;
+		return BUILTIN_ERROR;
 	char path[PATH_MAX];
 	DIR * cur_dir = opendir(getcwd(path,PATH_MAX));
 	if(cur_dir == NULL)
-		return -1;
+		return BUILTIN_ERROR;
 	struct dirent * tmp_cont;
 	while(tmp_cont = readdir(cur_dir)){
 		if(tmp_cont->d_name[0] == '.')

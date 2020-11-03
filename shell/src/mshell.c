@@ -33,6 +33,7 @@ void copy_args(char ** dest, command * source);
 void free_Argv(char ** Argv);
 
 //name says everything
+//returns whether a builting has been executed
 bool handle_builtins(char ** Argv);
 
 //run command and handle possible errors
@@ -52,14 +53,9 @@ int main(int argc, char *argv[])
 	command * com;
 	size_t argcounter;
 	struct buffers buf = {0, 0, 0};
-	size_t i;
 	char ** Argv;
 	__pid_t forked;
 	struct stat fstat_buf;
-	int fstat_status;
-	bool erasing_now = false;
-	bool only_white = true;
-	bool comment = false;
 
 	if(fstat(0,&fstat_buf))
 		exit(EXIT_FAILURE);
