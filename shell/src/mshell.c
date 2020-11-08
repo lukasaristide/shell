@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include <fcntl.h>
 
 #include "config.h"
 #include "siparse.h"
@@ -47,20 +48,23 @@ void execute_process(char ** Argv);
 //defines above are all the possible return values - they specify, what to do next
 int read_before_parse(struct buffers * buf);
 
+//it does what it says
+int deal_with_pipeline(pipeline * pline);
+
+//it deals with placing files on stdin/out
+bool handle_redir(redir * r);
+
 int main(int argc, char *argv[])
 {
-	pipelineseq * ln;
-	command * com;
-	size_t argcounter;
 	struct buffers buf = {0, 0, 0};
-	char ** Argv;
-	__pid_t forked;
+	pipelineseq * ln, * curln;
+	commandseq * comseq;
 	struct stat fstat_buf;
 
 	if(fstat(0,&fstat_buf))
 		exit(EXIT_FAILURE);
 
-	begin_main_loop:
+	begin_main_loop: {
 		//writing prompt
 		if(S_ISCHR(fstat_buf.st_mode))
 			write(1, PROMPT_STR, strlen(PROMPT_STR));
@@ -81,50 +85,35 @@ int main(int argc, char *argv[])
 
 		//parsing input line
 		ln = parseline(buf.firstLine);
-		//seperating first command
-		com = pickfirstcommand(ln);
 
 		//handling syntax errors
-		if(com == NULL){
+		if(ln == NULL){
 		syntax_err:
 			write(2, SYNTAX_ERROR_STR, strlen(SYNTAX_ERROR_STR));
 			write(2,"\n",1);
 			goto begin_main_loop;
 		}
 
-		//rewriting parsed args to array
-		//first, let's count them
-		argcounter = count_args(com);
-
-		//let's reserve enough place for them all
-		Argv = malloc(sizeof(char*)*(argcounter+1));
-		Argv[argcounter] = NULL;
-
-		//and let's copy them to said array
-		copy_args(Argv, com);
-
-		//handle builtins
-		if(handle_builtins(Argv))
-			goto begin_main_loop;
-
-		//starting new process
-		forked = fork();
-		if(forked == 0){
-			//new process - run command
-			execute_process(Argv);
-		} else if(forked > 0){
-			//parent process - wait for child precess to end
-			waitpid(forked, NULL, 0);
-		} else{
-			//if somehow we didn't manage to fork, let's end with error - that's not good
-			free_Argv(Argv);
-			exit(EXIT_FAILURE);
-		}
-
-		//freeing memory at Argv
-		free_Argv(Argv);
+		//iterating through pipelines
+		curln = ln;
+		do {
+			switch(deal_with_pipeline(curln->pipeline)){
+			case GO_NORMAL:
+				break;
+			case GO_BEG_LOOP:
+				goto begin_main_loop;
+			case GO_END_LOOP:
+				goto end_main_loop;
+			case GO_SYNTAX:
+				goto syntax_err;
+			default:
+				goto end_main_loop;
+			}
+			curln = curln->next;
+		} while(curln != ln);
 
 		goto begin_main_loop;
+	}
 	end_main_loop:
 
 	//end of line here makes it a bit more eye candy
@@ -288,4 +277,156 @@ void execute_process(char ** Argv){
 		exit(EXEC_FAILURE);
 	}
 	exit(EXIT_SUCCESS);
+}
+
+int deal_with_pipeline(pipeline * pline){
+	commandseq * cseq;
+	redirseq * redseq;
+	size_t argcounter;
+	char ** Argv;
+	__pid_t forked;
+	bool might_be_builtin = true;
+	if(!pline || !pline->commands)
+		return GO_SYNTAX;
+
+	cseq = pline->commands;
+	do{
+		if(!cseq->com || !cseq->com->args || !cseq->com->args->arg || 1 >= strlen(cseq->com->args->arg))
+			return GO_SYNTAX;
+	} while (cseq != pline->commands);
+
+	int pipe_before[2] = {STDIN_FILENO, STDOUT_FILENO}, pipe_after[2] = {STDIN_FILENO, STDOUT_FILENO};
+	pipe(pipe_before);
+	close(pipe_before[1]);
+	pipe(pipe_after);
+
+	do {
+		might_be_builtin = true;
+		//rewriting parsed args to array
+		//first, let's count them
+		argcounter = count_args(cseq->com);
+
+		//let's reserve enough place for them all
+		Argv = malloc(sizeof(char*)*(argcounter+1));
+		Argv[argcounter] = NULL;
+
+		//and let's copy them to said array
+		copy_args(Argv, cseq->com);
+
+		if(handle_builtins(Argv)){
+			for(int i = 0; i < 2; i++){
+				close(pipe_after[i]);
+				close(pipe_before[i]);
+			}
+			return GO_BEG_LOOP;
+		}
+
+		//starting new process
+		forked = fork();
+		if(forked > 0){
+			//parent process - wait for child precess to end
+			waitpid(forked, NULL, 0);
+
+			//reseting pipes
+			close(pipe_before[0]);
+			close(pipe_after[1]);
+			for(int i = 0; i < 2; i++)
+				pipe_before[i] = pipe_after[i];
+			pipe(pipe_after);
+
+			//freeing memory at Argv
+			free_Argv(Argv);
+
+			cseq = cseq->next;
+			continue;
+		} else if (forked < 0){
+			//if somehow we didn't manage to fork, let's end with error - that's not good
+			exit(EXIT_FAILURE);
+		}
+
+		bool redir_in = false, redir_out = false;
+
+		//iteratng through redirs and handling them
+		redseq = cseq->com->redirs;
+		do {
+			if(!redseq || !redseq->r) break;
+
+			if(handle_redir(redseq->r)){
+				if(IS_RIN(redseq->r->flags))
+					redir_in = true;
+				else
+					redir_out = true;
+			} else exit(EXIT_SUCCESS);
+
+			redseq = redseq->next;
+		} while (redseq != cseq->com->redirs);
+
+
+		if(!redir_in && cseq != pline->commands){
+			dup2(pipe_before[0],STDIN_FILENO);
+			close(pipe_before[0]);
+		}
+		else
+			close(pipe_before[0]);
+		if(!redir_out && cseq->next != pline->commands){
+			dup2(pipe_after[1],STDOUT_FILENO);
+			close(pipe_after[1]);
+		}
+		else{
+			close(pipe_after[0]);
+			close(pipe_after[1]);
+		}
+
+		//run command
+		execute_process(Argv);
+
+	} while (cseq != pline->commands);
+
+	//closing pipes
+	for(int i = 0; i < 2; i++){
+		close(pipe_after[i]);
+		close(pipe_before[i]);
+	}
+
+	return GO_NORMAL;
+}
+
+bool handle_redir(redir * r){
+	//backup - in case something goes wrong, let's not lose out stdin/stdout
+	int fd, backup;
+
+	//if there is a file on input
+	if(IS_RIN(r->flags)){
+		backup = dup(STDIN_FILENO);
+		close(STDIN_FILENO);
+		fd = open(r->filename,O_RDONLY);
+		if(fd < 0)
+			dup2(backup,STDIN_FILENO);
+		close(backup);
+	//if we shall write to file
+	} else if(IS_ROUT(r->flags) || IS_RAPPEND(r->flags)){
+		backup = dup(STDOUT_FILENO);
+		close(STDOUT_FILENO);
+		fd = open(r->filename, IS_ROUT(r->flags) ? O_WRONLY|O_CREAT|O_TRUNC : O_WRONLY|O_CREAT|O_APPEND, S_IRUSR|S_IWUSR);
+		if(fd < 0)
+			dup2(backup,STDOUT_FILENO);
+		close(backup);
+	}
+
+	//if something went wrong - write, what exactly
+	if(fd < 0){
+		write(STDERR_FILENO, r->filename, strlen(r->filename));
+		switch(errno){
+		case EACCES:
+			write(STDERR_FILENO, ": permission denied\n", 20);
+			break;
+		case ENOENT:
+			write(STDERR_FILENO, ": no such file or directory\n", 28);
+			break;
+		default:
+			write(STDERR_FILENO, ": weird error\n", 14);
+		}
+		return false;
+	}
+	return true;
 }
