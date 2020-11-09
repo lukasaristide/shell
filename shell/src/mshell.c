@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
 	begin_main_loop: {
 		//writing prompt
 		if(S_ISCHR(fstat_buf.st_mode))
-			write(1, PROMPT_STR, strlen(PROMPT_STR));
+			write(STDOUT_FILENO, PROMPT_STR, strlen(PROMPT_STR));
 
 		//reading from stdin and extracting first line to buf.firstLine
 		switch(read_before_parse(&buf)){
@@ -89,8 +89,8 @@ int main(int argc, char *argv[])
 		//handling syntax errors
 		if(ln == NULL){
 		syntax_err:
-			write(2, SYNTAX_ERROR_STR, strlen(SYNTAX_ERROR_STR));
-			write(2,"\n",1);
+			write(STDERR_FILENO, SYNTAX_ERROR_STR, strlen(SYNTAX_ERROR_STR));
+			write(STDERR_FILENO,"\n",1);
 			goto begin_main_loop;
 		}
 
@@ -113,8 +113,7 @@ int main(int argc, char *argv[])
 		} while(curln != ln);
 
 		goto begin_main_loop;
-	}
-	end_main_loop:
+	} end_main_loop:
 
 	//end of line here makes it a bit more eye candy
 	//end yet it doesn't sit well with the tests, so it's commented
@@ -129,7 +128,7 @@ int read_before_parse(struct buffers * buf){
 	bool comment = false;
 	if ((*buf).placeInBuffer >= (*buf).howManyDidIRead) {
 		//reading line + memorizing, how many chars were there
-		(*buf).howManyDidIRead = read(0, (*buf).buf, 10 * MAX_LINE_LENGTH);
+		(*buf).howManyDidIRead = read(STDIN_FILENO, (*buf).buf, 10 * MAX_LINE_LENGTH);
 		(*buf).placeInBuffer = 0;
 
 		//if eof encountered - stop
@@ -173,7 +172,7 @@ int read_before_parse(struct buffers * buf){
 		//buf is insufficient - let's move it forward
 		if ((*buf).placeInBuffer >= (*buf).howManyDidIRead - 1) {
 			//reading line + memorizing, how many chars were there
-			(*buf).howManyDidIRead = read(0, (*buf).buf, 10 * MAX_LINE_LENGTH);
+			(*buf).howManyDidIRead = read(STDIN_FILENO, (*buf).buf, 10 * MAX_LINE_LENGTH);
 			(*buf).placeInBuffer = -1;
 
 			//if eof encountered - stop
@@ -245,9 +244,9 @@ bool handle_builtins(char ** Argv){
 	for(int i = 0; builtins_table[i].name != NULL; i++){
 		if(strcmp(builtins_table[i].name, Argv[0]) == 0){
 			if(builtins_table[i].fun(Argv)){
-				write(2, "Builtin ", 8);
-				write(2, Argv[0], strlen(Argv[0]));
-				write(2, " error.\n", 8);
+				write(STDERR_FILENO, "Builtin ", 8);
+				write(STDERR_FILENO, Argv[0], strlen(Argv[0]));
+				write(STDERR_FILENO, " error.\n", 8);
 			}
 			free_Argv(Argv);
 			return true;
@@ -260,19 +259,19 @@ void execute_process(char ** Argv){
 	if(-1 == execvp(Argv[0], Argv)){
 		int errorno = errno;
 		//write command's text
-		write(2, Argv[0], strlen(Argv[0]));
+		write(STDERR_FILENO, Argv[0], strlen(Argv[0]));
 		switch(errorno){
 		case ENOENT:
 			//no such file or dir
-			write(2,": no such file or directory\n",28);
+			write(STDERR_FILENO,": no such file or directory\n",28);
 			break;
 		case EACCES:
 			//permission denied
-			write(2,": permission denied\n",20);
+			write(STDERR_FILENO,": permission denied\n",20);
 			break;
 		default:
 			//anything else that can possibly go wrong
-			write(2,": exec error\n",13);
+			write(STDERR_FILENO,": exec error\n",13);
 		}
 		exit(EXEC_FAILURE);
 	}
@@ -295,7 +294,7 @@ int deal_with_pipeline(pipeline * pline){
 			return GO_SYNTAX;
 	} while (cseq != pline->commands);
 
-	int pipe_before[2] = {STDIN_FILENO, STDOUT_FILENO}, pipe_after[2] = {STDIN_FILENO, STDOUT_FILENO};
+	int pipe_before[2], pipe_after[2];
 	pipe(pipe_before);
 	close(pipe_before[1]);
 	pipe(pipe_after);
