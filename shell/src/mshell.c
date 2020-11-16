@@ -24,6 +24,8 @@ struct buffers{
 	char firstLine[MAX_LINE_LENGTH + 1];
 };
 
+#define write_bck_pipe(str) write(pipe_bcg_ending[1],str,strlen(str))
+
 //name says everything
 size_t count_args(command *com);
 
@@ -49,7 +51,7 @@ void execute_process(char ** Argv);
 int read_before_parse(struct buffers * buf);
 
 //it does what it says
-int deal_with_pipeline(pipeline * pline);
+int deal_with_pipeline(pipeline * pline, int pipe_bcg_ending[2]);
 
 //it deals with placing files on stdin/out
 bool handle_redir(redir * r);
@@ -64,7 +66,21 @@ int main(int argc, char *argv[])
 	if(fstat(0,&fstat_buf))
 		exit(EXIT_FAILURE);
 
+	int pipe_bcg_ending[2];
+	int i = pipe(pipe_bcg_ending);
+	fcntl(pipe_bcg_ending[0], F_SETFL, fcntl(pipe_bcg_ending[0], F_GETFL, 0) | O_NONBLOCK);
+
+	char bg_ending_buf[100];
+
+
 	begin_main_loop: {
+		//writing possible process endings
+		int rd = 0;
+		do{
+			rd = read(pipe_bcg_ending[0],bg_ending_buf,100);
+			write(STDOUT_FILENO,bg_ending_buf,rd);
+		} while(rd == 100);
+
 		//writing prompt
 		if(S_ISCHR(fstat_buf.st_mode))
 			write(STDOUT_FILENO, PROMPT_STR, strlen(PROMPT_STR));
@@ -97,7 +113,7 @@ int main(int argc, char *argv[])
 		//iterating through pipelines
 		curln = ln;
 		do {
-			switch(deal_with_pipeline(curln->pipeline)){
+			switch(deal_with_pipeline(curln->pipeline, pipe_bcg_ending)){
 			case GO_NORMAL:
 				break;
 			case GO_BEG_LOOP:
@@ -118,6 +134,10 @@ int main(int argc, char *argv[])
 	//end of line here makes it a bit more eye candy
 	//end yet it doesn't sit well with the tests, so it's commented
 	//write(1,"\n",1);
+
+	//let's close remaining pipe
+	close(pipe_bcg_ending[0]);
+	close(pipe_bcg_ending[1]);
 
 	exit(EXIT_SUCCESS);
 }
@@ -278,13 +298,14 @@ void execute_process(char ** Argv){
 	exit(EXIT_SUCCESS);
 }
 
-int deal_with_pipeline(pipeline * pline){
+int deal_with_pipeline(pipeline * pline, int pipe_bcg_ending[2]){
 	commandseq * cseq;
 	redirseq * redseq;
 	size_t argcounter;
 	char ** Argv;
-	__pid_t forked;
+	__pid_t forked, fork_bg = 0;
 	bool might_be_builtin = true;
+
 	if(!pline || !pline->commands)
 		return GO_SYNTAX;
 
@@ -293,6 +314,12 @@ int deal_with_pipeline(pipeline * pline){
 		if(!cseq->com || !cseq->com->args || !cseq->com->args->arg || 1 >= strlen(cseq->com->args->arg))
 			return GO_SYNTAX;
 	} while (cseq != pline->commands);
+
+
+	//fork and run it in bg
+	if(pline->flags & INBACKGROUND)
+		if(fork_bg = fork())
+			return GO_BEG_LOOP;
 
 	int pipe_before[2], pipe_after[2];
 	pipe(pipe_before);
@@ -323,8 +350,55 @@ int deal_with_pipeline(pipeline * pline){
 		//starting new process
 		forked = fork();
 		if(forked > 0){
-			//parent process - wait for child precess to end
-			waitpid(forked, NULL, 0);
+			int status_child;
+			char forked_str[10];
+
+			//my version of gcc has no itoa, apparently - hence this sprintf
+			sprintf(forked_str,"%d",forked);
+
+			//parent process - wait for child process to end
+			waitpid(forked, &status_child, 0);
+
+			if(pline->flags & INBACKGROUND) {
+				write_bck_pipe("Background process ");		//write(STDOUT_FILENO,"Background process (",20);
+				write_bck_pipe(forked_str);					//write(STDOUT_FILENO,forked_str,strlen(forked_str));
+				write_bck_pipe(" terminated.");			//write(STDOUT_FILENO,") terminated.", 12);
+
+				//exited - let's write exit code
+				if(WIFEXITED(status_child)){
+					char return_val[10];
+					sprintf(return_val,"%d",WEXITSTATUS(status_child));
+					write_bck_pipe(" (exited with status ");	//write(STDOUT_FILENO," (exited with status (",22);
+					write_bck_pipe(return_val);					//write(STDOUT_FILENO,return_val,strlen(return_val));
+					write_bck_pipe(")\n");						//write(STDOUT_FILENO,"))\n",3);
+				//received signal
+				} else if(WIFSIGNALED(status_child)) {
+					write_bck_pipe(" (killed by signal ");
+					switch(WTERMSIG(status_child)){
+					case SIGHUP:
+						write_bck_pipe("sighup");
+						break;
+					case SIGINT:
+						write_bck_pipe("sigint");
+						break;
+					case SIGQUIT:
+						write_bck_pipe("sigquit");
+						break;
+					case SIGILL:
+						write_bck_pipe("sigill");
+						break;
+					case SIGTRAP:
+						write_bck_pipe("sigtrap");
+						break;
+					case SIGABRT:
+						write_bck_pipe("sigabrt");
+						break;
+					default:
+						break;
+					}
+					write_bck_pipe(")\n");
+				}
+			}
 
 			//reseting pipes
 			close(pipe_before[0]);
@@ -386,6 +460,9 @@ int deal_with_pipeline(pipeline * pline){
 		close(pipe_after[i]);
 		close(pipe_before[i]);
 	}
+
+	if(pline->flags & INBACKGROUND)
+		exit(EXIT_SUCCESS);
 
 	return GO_NORMAL;
 }
