@@ -24,7 +24,15 @@ struct buffers{
 	char firstLine[MAX_LINE_LENGTH + 1];
 };
 
-#define write_bck_pipe(str) write(pipe_bcg_ending[1],str,strlen(str))
+//global defines concerning remembering child processes
+#define MAX_PROCESSES_NUMBER 1000
+size_t cur_processes_number = 0;
+__pid_t CHILD_PROCESSES[MAX_PROCESSES_NUMBER];
+
+#define write_bck_pipe(str) write(STDOUT_FILENO,str,strlen(str))
+
+//look at child process - if it has already finished
+bool look_child(int i);
 
 //name says everything
 size_t count_args(command *com);
@@ -51,7 +59,7 @@ void execute_process(char ** Argv);
 int read_before_parse(struct buffers * buf);
 
 //it does what it says
-int deal_with_pipeline(pipeline * pline, int pipe_bcg_ending[2]);
+int deal_with_pipeline(pipeline * pline);
 
 //it deals with placing files on stdin/out
 bool handle_redir(redir * r);
@@ -66,20 +74,12 @@ int main(int argc, char *argv[])
 	if(fstat(0,&fstat_buf))
 		exit(EXIT_FAILURE);
 
-	int pipe_bcg_ending[2];
-	int i = pipe(pipe_bcg_ending);
-	fcntl(pipe_bcg_ending[0], F_SETFL, fcntl(pipe_bcg_ending[0], F_GETFL, 0) | O_NONBLOCK);
-
-	char bg_ending_buf[100];
-
-
 	begin_main_loop: {
 		//writing possible process endings
-		int rd = 0;
-		do{
-			rd = read(pipe_bcg_ending[0],bg_ending_buf,100);
-			write(STDOUT_FILENO,bg_ending_buf,rd);
-		} while(rd == 100);
+		for(int i = 0; i < cur_processes_number; i++){
+			if(look_child(i))
+				i--;
+		}
 
 		//writing prompt
 		if(S_ISCHR(fstat_buf.st_mode))
@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
 		//iterating through pipelines
 		curln = ln;
 		do {
-			switch(deal_with_pipeline(curln->pipeline, pipe_bcg_ending)){
+			switch(deal_with_pipeline(curln->pipeline)){
 			case GO_NORMAL:
 				break;
 			case GO_BEG_LOOP:
@@ -135,11 +135,40 @@ int main(int argc, char *argv[])
 	//end yet it doesn't sit well with the tests, so it's commented
 	//write(1,"\n",1);
 
-	//let's close remaining pipe
-	close(pipe_bcg_ending[0]);
-	close(pipe_bcg_ending[1]);
-
 	exit(EXIT_SUCCESS);
+}
+
+bool look_child(int i){
+	int status_child;
+
+	if(!waitpid(CHILD_PROCESSES[i],&status_child,WNOHANG))
+		return false;
+
+	char pid_str[10];
+	//looks like my gcc doesn't know of atoi - hence this sprintf
+	sprintf(pid_str,"%d",CHILD_PROCESSES[i]);
+
+	write_bck_pipe("Background process ");			//write(STDOUT_FILENO,"Background process (",20);
+	write_bck_pipe(pid_str);						//write(STDOUT_FILENO,pid_str,strlen(pid_str));
+	write_bck_pipe(" terminated.");					//write(STDOUT_FILENO,") terminated.", 12);
+
+	//exited - let's write exit code
+	if(WIFEXITED(status_child)){
+		char return_val[10];
+		sprintf(return_val,"%d",WEXITSTATUS(status_child));
+		write_bck_pipe(" (exited with status ");	//write(STDOUT_FILENO," (exited with status (",22);
+		write_bck_pipe(return_val);					//write(STDOUT_FILENO,return_val,strlen(return_val));
+		write_bck_pipe(")\n");						//write(STDOUT_FILENO,"))\n",3);
+	//received signal
+	} else if(WIFSIGNALED(status_child)) {
+		char signal_no[10];
+		sprintf(signal_no,"%d",WTERMSIG(status_child));
+		write_bck_pipe(" (killed by signal ");
+		write_bck_pipe(signal_no);
+		write_bck_pipe(")\n");
+	}
+	CHILD_PROCESSES[i] = CHILD_PROCESSES[--cur_processes_number];
+	return true;
 }
 
 int read_before_parse(struct buffers * buf){
@@ -298,7 +327,7 @@ void execute_process(char ** Argv){
 	exit(EXIT_SUCCESS);
 }
 
-int deal_with_pipeline(pipeline * pline, int pipe_bcg_ending[2]){
+int deal_with_pipeline(pipeline * pline){
 	commandseq * cseq;
 	redirseq * redseq;
 	size_t argcounter;
@@ -317,9 +346,9 @@ int deal_with_pipeline(pipeline * pline, int pipe_bcg_ending[2]){
 
 
 	//fork and run it in bg
-	if(pline->flags & INBACKGROUND)
-		if(fork_bg = fork())
-			return GO_BEG_LOOP;
+	//if(pline->flags & INBACKGROUND)
+	//	if(fork_bg = fork())
+	//		return GO_BEG_LOOP;
 
 	int pipe_before[2], pipe_after[2];
 	pipe(pipe_before);
@@ -350,54 +379,11 @@ int deal_with_pipeline(pipeline * pline, int pipe_bcg_ending[2]){
 		//starting new process
 		forked = fork();
 		if(forked > 0){
-			int status_child;
-			char forked_str[10];
-
-			//my version of gcc has no itoa, apparently - hence this sprintf
-			sprintf(forked_str,"%d",forked);
-
-			//parent process - wait for child process to end
-			waitpid(forked, &status_child, 0);
-
 			if(pline->flags & INBACKGROUND) {
-				write_bck_pipe("Background process ");		//write(STDOUT_FILENO,"Background process (",20);
-				write_bck_pipe(forked_str);					//write(STDOUT_FILENO,forked_str,strlen(forked_str));
-				write_bck_pipe(" terminated.");			//write(STDOUT_FILENO,") terminated.", 12);
-
-				//exited - let's write exit code
-				if(WIFEXITED(status_child)){
-					char return_val[10];
-					sprintf(return_val,"%d",WEXITSTATUS(status_child));
-					write_bck_pipe(" (exited with status ");	//write(STDOUT_FILENO," (exited with status (",22);
-					write_bck_pipe(return_val);					//write(STDOUT_FILENO,return_val,strlen(return_val));
-					write_bck_pipe(")\n");						//write(STDOUT_FILENO,"))\n",3);
-				//received signal
-				} else if(WIFSIGNALED(status_child)) {
-					write_bck_pipe(" (killed by signal ");
-					switch(WTERMSIG(status_child)){
-					case SIGHUP:
-						write_bck_pipe("sighup");
-						break;
-					case SIGINT:
-						write_bck_pipe("sigint");
-						break;
-					case SIGQUIT:
-						write_bck_pipe("sigquit");
-						break;
-					case SIGILL:
-						write_bck_pipe("sigill");
-						break;
-					case SIGTRAP:
-						write_bck_pipe("sigtrap");
-						break;
-					case SIGABRT:
-						write_bck_pipe("sigabrt");
-						break;
-					default:
-						break;
-					}
-					write_bck_pipe(")\n");
-				}
+				CHILD_PROCESSES[cur_processes_number++] = forked;
+			} else {
+				//parent process - wait for child process to end
+				waitpid(forked, NULL, 0);
 			}
 
 			//reseting pipes
@@ -461,8 +447,8 @@ int deal_with_pipeline(pipeline * pline, int pipe_bcg_ending[2]){
 		close(pipe_before[i]);
 	}
 
-	if(pline->flags & INBACKGROUND)
-		exit(EXIT_SUCCESS);
+	//if(pline->flags & INBACKGROUND)
+	//	exit(EXIT_SUCCESS);
 
 	return GO_NORMAL;
 }
