@@ -32,7 +32,7 @@ __pid_t CHILD_PROCESSES[MAX_PROCESSES_NUMBER];
 #define write_bck_pipe(str) write(STDOUT_FILENO,str,strlen(str))
 
 //look at child process - if it has already finished
-bool look_child(int i);
+bool look_child(int i, bool hang);
 
 //name says everything
 size_t count_args(command *com);
@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
 	begin_main_loop: {
 		//writing possible process endings
 		for(int i = 0; i < cur_processes_number; i++){
-			if(look_child(i))
+			if(look_child(i, false))
 				i--;
 		}
 
@@ -131,6 +131,10 @@ int main(int argc, char *argv[])
 		goto begin_main_loop;
 	} end_main_loop:
 
+	//no zombies - wait for background processes
+	while(cur_processes_number--)
+		look_child(cur_processes_number, true);
+
 	//end of line here makes it a bit more eye candy
 	//end yet it doesn't sit well with the tests, so it's commented
 	//write(1,"\n",1);
@@ -138,10 +142,10 @@ int main(int argc, char *argv[])
 	exit(EXIT_SUCCESS);
 }
 
-bool look_child(int i){
+bool look_child(int i, bool hang){
 	int status_child;
 
-	if(!waitpid(CHILD_PROCESSES[i],&status_child,WNOHANG))
+	if(!waitpid(CHILD_PROCESSES[i],&status_child, hang ? 0 : WNOHANG))
 		return false;
 
 	char pid_str[10];
