@@ -1,79 +1,5 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <string.h>
-#include <errno.h>
-#include <limits.h>
-#include <sys/stat.h>
-#include <stdbool.h>
-#include <ctype.h>
-#include <fcntl.h>
-#include <signal.h>
-
-#include "config.h"
-#include "siparse.h"
-#include "utils.h"
-#include "builtins.h"
-
-struct buffers{
-	size_t placeInBuffer;
-	size_t placeInLine;
-	long long howManyDidIRead;
-	char buf[10 * MAX_LINE_LENGTH + 1];
-	char firstLine[MAX_LINE_LENGTH + 1];
-};
-
-//global defines concerning remembering child processes
-#define MAX_PROCESSES_NUMBER 1000
-size_t cur_processes_number = 0;
-__pid_t CHILD_PROCESSES[MAX_PROCESSES_NUMBER];
-int CHILD_STATUSES[MAX_PROCESSES_NUMBER];
-
-__pid_t FOREGR_PROCESSES[1000];
-	size_t place_forg = 0;
-
-bool write_prompt_if_sig = false;
-bool is_not_file = false;
-
-#define write_bck_pipe(str) write(STDOUT_FILENO,str,strlen(str))
-
-//look at child process - if it has already finished
-bool look_child(int i);
-
-//name says everything
-size_t count_args(command *com);
-
-//copying strings representing args from command struct to array of null-terminated strings
-void copy_args(char ** dest, command * source);
-
-//free memory at Argv to prevent memory leaks
-void free_Argv(char ** Argv);
-
-//name says everything
-//returns whether a builting has been executed
-bool handle_builtins(char ** Argv);
-
-//run command and handle possible errors
-void execute_process(char ** Argv);
-
-#define GO_END_LOOP 1
-#define GO_BEG_LOOP -1
-#define GO_NORMAL 0
-#define GO_SYNTAX 2
-//this handles buffers, reads from stdin and extracts lines one by one
-//defines above are all the possible return values - they specify, what to do next
-int read_before_parse(struct buffers * buf);
-
-//it does what it says
-int deal_with_pipeline(pipeline * pline);
-
-//it deals with placing files on stdin/out
-bool handle_redir(redir * r);
-
-void set_sigchild();
-void set_sigint();
+#include "std_includes.h"
+#include "my_includes.h"
 
 int main(int argc, char *argv[])
 {
@@ -201,27 +127,27 @@ bool look_child(int i){
 	//	return false;
 
 	char pid_str[10];
-	//looks like my gcc doesn't know of atoi - hence this sprintf
+	//looks like my gcc doesn't know of itoa - hence this sprintf
 	sprintf(pid_str,"%d",CHILD_PROCESSES[i]);
 
-	write_bck_pipe("Background process ");			//write(STDOUT_FILENO,"Background process (",20);
-	write_bck_pipe(pid_str);						//write(STDOUT_FILENO,pid_str,strlen(pid_str));
-	write_bck_pipe(" terminated.");					//write(STDOUT_FILENO,") terminated.", 12);
+	write_to_stdout("Background process ");			//write(STDOUT_FILENO,"Background process (",20);
+	write_to_stdout(pid_str);						//write(STDOUT_FILENO,pid_str,strlen(pid_str));
+	write_to_stdout(" terminated.");					//write(STDOUT_FILENO,") terminated.", 12);
 
 	//exited - let's write exit code
 	if(WIFEXITED(status_child)){
 		char return_val[10];
 		sprintf(return_val,"%d",WEXITSTATUS(status_child));
-		write_bck_pipe(" (exited with status ");	//write(STDOUT_FILENO," (exited with status (",22);
-		write_bck_pipe(return_val);					//write(STDOUT_FILENO,return_val,strlen(return_val));
-		write_bck_pipe(")\n");						//write(STDOUT_FILENO,"))\n",3);
+		write_to_stdout(" (exited with status ");	//write(STDOUT_FILENO," (exited with status (",22);
+		write_to_stdout(return_val);					//write(STDOUT_FILENO,return_val,strlen(return_val));
+		write_to_stdout(")\n");						//write(STDOUT_FILENO,"))\n",3);
 	//received signal
 	} else if(WIFSIGNALED(status_child)) {
 		char signal_no[10];
 		sprintf(signal_no,"%d",WTERMSIG(status_child));
-		write_bck_pipe(" (killed by signal ");
-		write_bck_pipe(signal_no);
-		write_bck_pipe(")\n");
+		write_to_stdout(" (killed by signal ");
+		write_to_stdout(signal_no);
+		write_to_stdout(")\n");
 	}
 	CHILD_PROCESSES[i] = CHILD_PROCESSES[--cur_processes_number];
 	CHILD_STATUSES[i] = CHILD_STATUSES[cur_processes_number];
