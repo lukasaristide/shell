@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #include "config.h"
 #include "siparse.h"
@@ -19,7 +20,7 @@
 struct buffers{
 	size_t placeInBuffer;
 	size_t placeInLine;
-	size_t howManyDidIRead;
+	long long howManyDidIRead;
 	char buf[10 * MAX_LINE_LENGTH + 1];
 	char firstLine[MAX_LINE_LENGTH + 1];
 };
@@ -28,11 +29,18 @@ struct buffers{
 #define MAX_PROCESSES_NUMBER 1000
 size_t cur_processes_number = 0;
 __pid_t CHILD_PROCESSES[MAX_PROCESSES_NUMBER];
+int CHILD_STATUSES[MAX_PROCESSES_NUMBER];
+
+__pid_t FOREGR_PROCESSES[1000];
+	size_t place_forg = 0;
+
+bool write_prompt_if_sig = false;
+bool is_not_file = false;
 
 #define write_bck_pipe(str) write(STDOUT_FILENO,str,strlen(str))
 
 //look at child process - if it has already finished
-bool look_child(int i, bool hang);
+bool look_child(int i);
 
 //name says everything
 size_t count_args(command *com);
@@ -64,6 +72,9 @@ int deal_with_pipeline(pipeline * pline);
 //it deals with placing files on stdin/out
 bool handle_redir(redir * r);
 
+void set_sigchild();
+void set_sigint();
+
 int main(int argc, char *argv[])
 {
 	struct buffers buf = {0, 0, 0};
@@ -71,20 +82,29 @@ int main(int argc, char *argv[])
 	commandseq * comseq;
 	struct stat fstat_buf;
 
+	//let's block sigint
+	set_sigint();
+
+	//override handler for sigchld
+	set_sigchild();
+
 	if(fstat(0,&fstat_buf))
 		exit(EXIT_FAILURE);
 
+	is_not_file = S_ISCHR(fstat_buf.st_mode);
+
 	begin_main_loop: {
-		//writing possible process endings
-		for(int i = 0; i < cur_processes_number; i++){
-			if(look_child(i, false))
-				i--;
+		//writing prompt
+		if(is_not_file){
+			//writing possible process endings
+			for(int i = 0; i < cur_processes_number; i++){
+				if(look_child(i))
+					i--;
+			}
+			write(STDOUT_FILENO, PROMPT_STR, strlen(PROMPT_STR));
 		}
 
-		//writing prompt
-		if(S_ISCHR(fstat_buf.st_mode))
-			write(STDOUT_FILENO, PROMPT_STR, strlen(PROMPT_STR));
-
+		write_prompt_if_sig = true;
 		//reading from stdin and extracting first line to buf.firstLine
 		switch(read_before_parse(&buf)){
 		case GO_NORMAL:
@@ -98,6 +118,7 @@ int main(int argc, char *argv[])
 		default:
 			goto end_main_loop;
 		}
+		write_prompt_if_sig = false;
 
 		//parsing input line
 		ln = parseline(buf.firstLine);
@@ -132,8 +153,8 @@ int main(int argc, char *argv[])
 	} end_main_loop:
 
 	//no zombies - wait for background processes
-	while(cur_processes_number--)
-		look_child(cur_processes_number, true);
+	//while(cur_processes_number--)
+	//	look_child(cur_processes_number, true);
 
 	//end of line here makes it a bit more eye candy
 	//end yet it doesn't sit well with the tests, so it's commented
@@ -142,11 +163,42 @@ int main(int argc, char *argv[])
 	exit(EXIT_SUCCESS);
 }
 
-bool look_child(int i, bool hang){
-	int status_child;
+void handler_sigchld(int signal, siginfo_t * info, void * ucontext){
+	for(size_t i = 0; i < place_forg; i++){
+		if(FOREGR_PROCESSES[i] == info->si_pid){
+			FOREGR_PROCESSES[i--] = FOREGR_PROCESSES[--place_forg];
+			return;
+		}
+	}
+	CHILD_PROCESSES[cur_processes_number++] = info->si_pid;
+	CHILD_STATUSES[cur_processes_number] = info->si_status;
+}
 
-	if(!waitpid(CHILD_PROCESSES[i],&status_child, hang ? 0 : WNOHANG))
-		return false;
+void set_sigchild(){
+	struct sigaction act;
+	act.sa_sigaction = handler_sigchld;
+	act.sa_flags = SA_SIGINFO | SA_NOCLDWAIT;
+	sigaction(SIGCHLD, &act, NULL);
+}
+
+void handler_sigint(int sig) {
+	if(write_prompt_if_sig && is_not_file){
+		write(STDOUT_FILENO,"\n",1);
+		write(STDOUT_FILENO, PROMPT_STR, strlen(PROMPT_STR));
+	}
+}
+
+void set_sigint(){
+	struct sigaction act;
+	act.sa_handler = handler_sigint;
+	sigaction(SIGINT, &act, NULL);
+}
+
+bool look_child(int i){
+	int status_child = CHILD_STATUSES[i];
+
+	//if(!waitpid(CHILD_PROCESSES[i],&status_child, hang ? 0 : WNOHANG))
+	//	return false;
 
 	char pid_str[10];
 	//looks like my gcc doesn't know of atoi - hence this sprintf
@@ -172,6 +224,7 @@ bool look_child(int i, bool hang){
 		write_bck_pipe(")\n");
 	}
 	CHILD_PROCESSES[i] = CHILD_PROCESSES[--cur_processes_number];
+	CHILD_STATUSES[i] = CHILD_STATUSES[cur_processes_number];
 	return true;
 }
 
@@ -181,11 +234,17 @@ int read_before_parse(struct buffers * buf){
 	bool comment = false;
 	if ((*buf).placeInBuffer >= (*buf).howManyDidIRead) {
 		//reading line + memorizing, how many chars were there
+
+	read_repeat:
 		(*buf).howManyDidIRead = read(STDIN_FILENO, (*buf).buf, 10 * MAX_LINE_LENGTH);
 		(*buf).placeInBuffer = 0;
 
+		//interrupted - repeat
+		if ((*buf).howManyDidIRead < 0 && errno == EINTR)
+			goto read_repeat;
+
 		//if eof encountered - stop
-		if ((*buf).howManyDidIRead <= 0)
+		if ((*buf).howManyDidIRead == 0)
 			return GO_END_LOOP;
 
 		//instead of clearing buffer - let's add zero after read content
@@ -216,7 +275,7 @@ int read_before_parse(struct buffers * buf){
 				erasing_now = false;
 				return GO_SYNTAX;
 			}
-			(*buf).firstLine[(*buf).placeInLine + 1] = 0;
+			(*buf).firstLine[(*buf).placeInLine] = 0;
 			break;
 		//apparently, upcoming line is too long - let's start erasing it from the buffer
 		} else if ((*buf).placeInLine == MAX_LINE_LENGTH - 1)
@@ -234,6 +293,10 @@ int read_before_parse(struct buffers * buf){
 				(*buf).firstLine[(*buf).placeInLine + 2] = 0;
 				break;
 			}
+
+			//interrupted - repeat
+			if ((*buf).howManyDidIRead < 0 && errno == EINTR)
+				goto read_repeat;
 
 			//if read failed - end shell
 			if ((*buf).howManyDidIRead < 0)
@@ -381,13 +444,13 @@ int deal_with_pipeline(pipeline * pline){
 		}
 
 		//starting new process
+
 		forked = fork();
 		if(forked > 0){
 			if(pline->flags & INBACKGROUND) {
-				CHILD_PROCESSES[cur_processes_number++] = forked;
+				//CHILD_PROCESSES[cur_processes_number++] = forked;
 			} else {
-				//parent process - wait for child process to end
-				waitpid(forked, NULL, 0);
+				FOREGR_PROCESSES[place_forg++] = forked;
 			}
 
 			//reseting pipes
@@ -406,6 +469,9 @@ int deal_with_pipeline(pipeline * pline){
 			//if somehow we didn't manage to fork, let's end with error - that's not good
 			exit(EXIT_FAILURE);
 		}
+
+		if(pline->flags & INBACKGROUND)
+			setsid();
 
 		bool redir_in = false, redir_out = false;
 
@@ -447,9 +513,24 @@ int deal_with_pipeline(pipeline * pline){
 
 	//closing pipes
 	for(int i = 0; i < 2; i++){
-		close(pipe_after[i]);
-		close(pipe_before[i]);
+		if(pipe_after[i] != STDIN_FILENO && pipe_after[i] != STDOUT_FILENO && pipe_after[i] != STDERR_FILENO)
+			close(pipe_after[i]);
+		if(pipe_before[i] != STDIN_FILENO && pipe_before[i] != STDOUT_FILENO && pipe_before[i] != STDERR_FILENO)
+			close(pipe_before[i]);
 	}
+
+	//waiting for processes
+	sigset_t set;
+	sigemptyset(&set);
+	sigaddset(&set,SIGINT);
+	while(place_forg > 0){
+		sigsuspend(&set);
+		for(size_t i = 0; i < place_forg; i++){
+			if(0 != waitpid(FOREGR_PROCESSES[i],NULL,WNOHANG))
+				FOREGR_PROCESSES[i--] = FOREGR_PROCESSES[--place_forg];
+		}
+	}
+
 
 	//if(pline->flags & INBACKGROUND)
 	//	exit(EXIT_SUCCESS);
