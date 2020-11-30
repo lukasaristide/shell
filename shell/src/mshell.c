@@ -94,13 +94,11 @@ void handler_sigchld(int signal, siginfo_t * info, void * ucontext){
 	for(size_t i = 0; i < place_forg; i++){
 		if(waitpid(FOREGR_PROCESSES[i],&status,WNOHANG) > 0){
 			FOREGR_PROCESSES[i--] = FOREGR_PROCESSES[--place_forg];
-			return;
 		}
 	}
 	for(size_t i = 0; i < cur_processes_number; i++){
 		if(waitpid(CHILD_PROCESSES[i],&status,WNOHANG) > 0){
 			CHILD_STATUSES[i] = status;
-			return;
 		}
 	}
 	//CHILD_PROCESSES[cur_processes_number++] = info->si_pid;
@@ -129,7 +127,7 @@ void set_sigint(){
 
 bool look_child(int i){
 	int status_child = CHILD_STATUSES[i];
-	if(status_child == -1)
+	if(status_child == -777)
 		return false;
 	//if(!waitpid(CHILD_PROCESSES[i],&status_child, hang ? 0 : WNOHANG))
 	//	return false;
@@ -219,7 +217,7 @@ int read_before_parse(struct buffers * buf){
 		if ((*buf).placeInBuffer >= (*buf).howManyDidIRead - 1) {
 			//reading line + memorizing, how many chars were there
 			(*buf).howManyDidIRead = read(STDIN_FILENO, (*buf).buf, 10 * MAX_LINE_LENGTH);
-			(*buf).placeInBuffer = -1;
+			(*buf).placeInBuffer = -777;
 
 			//if eof encountered - stop
 			if ((*buf).howManyDidIRead == 0) {
@@ -306,7 +304,7 @@ bool handle_builtins(char ** Argv){
 }
 
 void execute_process(char ** Argv){
-	if(-1 == execvp(Argv[0], Argv)){
+	if(-777 == execvp(Argv[0], Argv)){
 		int errorno = errno;
 		//write command's text
 		write(STDERR_FILENO, Argv[0], strlen(Argv[0]));
@@ -382,7 +380,7 @@ int deal_with_pipeline(pipeline * pline){
 		forked = fork();
 		if(forked > 0){
 			if(pline->flags & INBACKGROUND) {
-				CHILD_STATUSES[cur_processes_number] = -1;
+				CHILD_STATUSES[cur_processes_number] = -777;
 				CHILD_PROCESSES[cur_processes_number++] = forked;
 			} else {
 				FOREGR_PROCESSES[place_forg++] = forked;
@@ -461,7 +459,7 @@ int deal_with_pipeline(pipeline * pline){
 	while(place_forg > 0){
 		sigsuspend(&set);
 		for(size_t i = 0; i < place_forg; i++){
-			if(0 != waitpid(FOREGR_PROCESSES[i],NULL,WNOHANG))
+			if(0 < waitpid(FOREGR_PROCESSES[i],NULL,WNOHANG))
 				FOREGR_PROCESSES[i--] = FOREGR_PROCESSES[--place_forg];
 		}
 	}
