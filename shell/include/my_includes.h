@@ -11,7 +11,7 @@ struct buffers{
 	size_t placeInBuffer;
 	size_t placeInLine;
 	long long howManyDidIRead;
-	char buf[10 * MAX_LINE_LENGTH + 1];
+	char buf[15 * MAX_LINE_LENGTH + 1];
 	char firstLine[MAX_LINE_LENGTH + 1];
 };
 

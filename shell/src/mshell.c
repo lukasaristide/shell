@@ -90,20 +90,27 @@ int main(int argc, char *argv[])
 }
 
 void handler_sigchld(int signal, siginfo_t * info, void * ucontext){
+	int status;
 	for(size_t i = 0; i < place_forg; i++){
-		if(FOREGR_PROCESSES[i] == info->si_pid){
+		if(waitpid(FOREGR_PROCESSES[i],&status,WNOHANG) > 0){
 			FOREGR_PROCESSES[i--] = FOREGR_PROCESSES[--place_forg];
 			return;
 		}
 	}
-	CHILD_PROCESSES[cur_processes_number++] = info->si_pid;
-	CHILD_STATUSES[cur_processes_number] = info->si_status;
+	for(size_t i = 0; i < cur_processes_number; i++){
+		if(waitpid(CHILD_PROCESSES[i],&status,WNOHANG) > 0){
+			CHILD_STATUSES[i] = status;
+			return;
+		}
+	}
+	//CHILD_PROCESSES[cur_processes_number++] = info->si_pid;
+	//CHILD_STATUSES[cur_processes_number] = info->si_status;
 }
 
 void set_sigchild(){
 	struct sigaction act;
 	act.sa_sigaction = handler_sigchld;
-	act.sa_flags = SA_SIGINFO | SA_NOCLDWAIT;
+	act.sa_flags = SA_SIGINFO; // | SA_NOCLDWAIT;
 	sigaction(SIGCHLD, &act, NULL);
 }
 
@@ -122,7 +129,8 @@ void set_sigint(){
 
 bool look_child(int i){
 	int status_child = CHILD_STATUSES[i];
-
+	if(status_child == -1)
+		return false;
 	//if(!waitpid(CHILD_PROCESSES[i],&status_child, hang ? 0 : WNOHANG))
 	//	return false;
 
@@ -374,7 +382,8 @@ int deal_with_pipeline(pipeline * pline){
 		forked = fork();
 		if(forked > 0){
 			if(pline->flags & INBACKGROUND) {
-				//CHILD_PROCESSES[cur_processes_number++] = forked;
+				CHILD_STATUSES[cur_processes_number] = -1;
+				CHILD_PROCESSES[cur_processes_number++] = forked;
 			} else {
 				FOREGR_PROCESSES[place_forg++] = forked;
 			}
@@ -466,13 +475,14 @@ int deal_with_pipeline(pipeline * pline){
 
 bool handle_redir(redir * r){
 	//backup - in case something goes wrong, let's not lose out stdin/stdout
-	int fd, backup;
+	int fd, backup, err;
 
 	//if there is a file on input
 	if(IS_RIN(r->flags)){
 		backup = dup(STDIN_FILENO);
 		close(STDIN_FILENO);
 		fd = open(r->filename,O_RDONLY);
+		err = errno;
 		if(fd < 0)
 			dup2(backup,STDIN_FILENO);
 		close(backup);
@@ -481,6 +491,7 @@ bool handle_redir(redir * r){
 		backup = dup(STDOUT_FILENO);
 		close(STDOUT_FILENO);
 		fd = open(r->filename, IS_ROUT(r->flags) ? O_WRONLY|O_CREAT|O_TRUNC : O_WRONLY|O_CREAT|O_APPEND, S_IRUSR|S_IWUSR);
+		err = errno;
 		if(fd < 0)
 			dup2(backup,STDOUT_FILENO);
 		close(backup);
@@ -489,7 +500,7 @@ bool handle_redir(redir * r){
 	//if something went wrong - write, what exactly
 	if(fd < 0){
 		write(STDERR_FILENO, r->filename, strlen(r->filename));
-		switch(errno){
+		switch(err){
 		case EACCES:
 			write(STDERR_FILENO, ": permission denied\n", 20);
 			break;
