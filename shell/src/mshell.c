@@ -127,7 +127,7 @@ void set_sigint(){
 
 bool look_child(int i){
 	int status_child = CHILD_STATUSES[i];
-	if(status_child == -777)
+	if(status_child == -1)
 		return false;
 	//if(!waitpid(CHILD_PROCESSES[i],&status_child, hang ? 0 : WNOHANG))
 	//	return false;
@@ -207,7 +207,7 @@ int read_before_parse(struct buffers * buf){
 				erasing_now = false;
 				return GO_SYNTAX;
 			}
-			(*buf).firstLine[(*buf).placeInLine] = 0;
+			(*buf).firstLine[(*buf).placeInLine+1] = 0;
 			break;
 		//apparently, upcoming line is too long - let's start erasing it from the buffer
 		} else if ((*buf).placeInLine == MAX_LINE_LENGTH - 1)
@@ -217,7 +217,7 @@ int read_before_parse(struct buffers * buf){
 		if ((*buf).placeInBuffer >= (*buf).howManyDidIRead - 1) {
 			//reading line + memorizing, how many chars were there
 			(*buf).howManyDidIRead = read(STDIN_FILENO, (*buf).buf, 10 * MAX_LINE_LENGTH);
-			(*buf).placeInBuffer = -777;
+			(*buf).placeInBuffer = -1;
 
 			//if eof encountered - stop
 			if ((*buf).howManyDidIRead == 0) {
@@ -304,7 +304,7 @@ bool handle_builtins(char ** Argv){
 }
 
 void execute_process(char ** Argv){
-	if(-777 == execvp(Argv[0], Argv)){
+	if(-1 == execvp(Argv[0], Argv)){
 		int errorno = errno;
 		//write command's text
 		write(STDERR_FILENO, Argv[0], strlen(Argv[0]));
@@ -380,7 +380,7 @@ int deal_with_pipeline(pipeline * pline){
 		forked = fork();
 		if(forked > 0){
 			if(pline->flags & INBACKGROUND) {
-				CHILD_STATUSES[cur_processes_number] = -777;
+				CHILD_STATUSES[cur_processes_number] = -1;
 				CHILD_PROCESSES[cur_processes_number++] = forked;
 			} else {
 				FOREGR_PROCESSES[place_forg++] = forked;
